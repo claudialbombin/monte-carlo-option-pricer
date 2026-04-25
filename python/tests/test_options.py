@@ -153,6 +153,11 @@ class TestAsianOptionInit:
         with pytest.raises(ValueError):
             AsianOption(K=-10.0, T=1.0, r=0.05)
 
+    def test_zero_maturity_raises_error(self):
+        """T=0 should raise ValueError."""
+        with pytest.raises(ValueError):
+            AsianOption(K=100.0, T=0.0, r=0.05)
+
 
 class TestAsianOptionPayoff:
     """Test Asian option payoff computation."""
@@ -258,6 +263,16 @@ class TestBarrierOptionInit:
         with pytest.raises(ValueError):
             BarrierOption(K=100.0, B=-10.0, T=1.0, r=0.05)
 
+    def test_zero_strike_raises_error(self):
+        """K=0 should raise ValueError."""
+        with pytest.raises(ValueError):
+            BarrierOption(K=0.0, B=120.0, T=1.0, r=0.05)
+
+    def test_zero_maturity_raises_error(self):
+        """T=0 should raise ValueError."""
+        with pytest.raises(ValueError):
+            BarrierOption(K=100.0, B=120.0, T=0.0, r=0.05)
+
 
 class TestBarrierOptionPayoff:
     """Test barrier option payoff with knockout logic."""
@@ -360,3 +375,50 @@ class TestDiscountFactor:
         price = option.price_from_terminal(S_T)
         # Price should be heavily discounted
         assert price < 5.0  # 100 payoff discounted at 5% for 100 years
+
+
+# ============================================================================
+# BarrierOption.price and knockout_probability_estimate Tests
+# ============================================================================
+
+class TestBarrierOptionPrice:
+    """Test BarrierOption.price() and knockout_probability_estimate."""
+
+    def test_price_returns_scalar(self, barrier_call):
+        """price() should return a float."""
+        paths = np.array([
+            [100.0, 105.0, 110.0, 115.0],  # survives, ITM
+            [100.0, 95.0,  90.0,  85.0],   # survives, OTM
+        ])
+        p = barrier_call.price(paths)
+        assert isinstance(p, float)
+
+    def test_price_is_discounted(self, barrier_call):
+        """price() should apply exp(-rT) discount."""
+        paths = np.array([[100.0, 105.0, 110.0, 115.0]])  # survives, S_T=115
+        p = barrier_call.price(paths)
+        expected = (115.0 - 100.0) * np.exp(-0.05)
+        assert np.isclose(p, expected)
+
+    def test_price_all_knocked_out_is_zero(self, barrier_call):
+        """If all paths are knocked out, price should be zero."""
+        paths = np.array([
+            [100.0, 125.0, 130.0, 140.0],
+            [100.0, 121.0, 130.0, 115.0],
+        ])
+        assert barrier_call.price(paths) == 0.0
+
+    def test_knockout_probability_estimate_none_before_call(self):
+        """knockout_probability_estimate should be None before pricing."""
+        option = BarrierOption(K=100.0, B=120.0, T=1.0, r=0.05)
+        assert option.knockout_probability_estimate is None
+
+    def test_knockout_probability_estimate_after_call(self, barrier_call):
+        """knockout_probability_estimate should be set after price_with_knockout_info."""
+        paths = np.array([
+            [100.0, 110.0, 115.0],  # survives
+            [100.0, 125.0, 110.0],  # knocked out
+        ])
+        barrier_call.price_with_knockout_info(paths)
+        prob = barrier_call.knockout_probability_estimate
+        assert prob == pytest.approx(0.5)

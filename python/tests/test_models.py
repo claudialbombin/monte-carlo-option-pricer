@@ -260,6 +260,18 @@ class TestHestonPathInit:
             HestonPath(S0=100.0, v0=0.04, r=0.05,
                        kappa=2.0, theta=0.04, xi=0.0, rho=-0.70)
 
+    def test_negative_S0_raises_error(self):
+        """Negative S0 should raise ValueError."""
+        with pytest.raises(ValueError, match="S0"):
+            HestonPath(S0=-1.0, v0=0.04, r=0.05,
+                       kappa=2.0, theta=0.04, xi=0.30, rho=-0.70)
+
+    def test_zero_theta_raises_error(self):
+        """Zero long-run variance (theta=0) should raise ValueError."""
+        with pytest.raises(ValueError, match="theta"):
+            HestonPath(S0=100.0, v0=0.04, r=0.05,
+                       kappa=2.0, theta=0.0, xi=0.30, rho=-0.70)
+
 
 class TestHestonPathSimulation:
     """Test Heston path simulation."""
