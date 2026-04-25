@@ -557,3 +557,344 @@ class TestGreeksEdgeCases:
             S_T, p["S0"], p["sigma"], 0.001, p["r"],
         )
         assert np.all(np.isfinite(scores))
+
+
+# ============================================================================
+# finite_difference_delta / finite_difference_vega helper functions
+# ============================================================================
+
+class TestFiniteDifferenceHelpers:
+    """Test the finite_difference_delta and finite_difference_vega helpers."""
+
+    def test_fd_delta_helper_calls_price_func(self, standard_params):
+        """finite_difference_delta should call price_func with perturbed S0."""
+        p = standard_params
+        calls = []
+
+        def price_func(S0):
+            calls.append(S0)
+            return S0 * 0.01  # Simple mock
+
+        finite_difference_delta(price_func, p["S0"], h=0.1)
+        assert len(calls) == 2
+        assert pytest.approx(calls[0]) == p["S0"] + 0.1
+        assert pytest.approx(calls[1]) == p["S0"] - 0.1
+
+    def test_fd_delta_helper_result(self, standard_params):
+        """finite_difference_delta should return (f(S0+h) - f(S0-h)) / (2h)."""
+        p = standard_params
+        h = 1.0
+
+        def price_func(S0):
+            return S0 * 2.0  # slope = 2, so delta = 2
+
+        delta = finite_difference_delta(price_func, p["S0"], h=h)
+        assert delta == pytest.approx(2.0)
+
+    def test_fd_vega_helper_calls_price_func(self, standard_params):
+        """finite_difference_vega should call price_func with perturbed sigma."""
+        p = standard_params
+        calls = []
+
+        def price_func(sigma):
+            calls.append(sigma)
+            return sigma * 10.0  # Simple mock
+
+        finite_difference_vega(price_func, p["sigma"], h=0.01)
+        assert len(calls) == 2
+        assert pytest.approx(calls[0]) == p["sigma"] + 0.01
+        assert pytest.approx(calls[1]) == p["sigma"] - 0.01
+
+    def test_fd_vega_helper_result(self, standard_params):
+        """finite_difference_vega should return (f(σ+h) - f(σ-h)) / (2h)."""
+        p = standard_params
+        h = 1.0
+
+        def price_func(sigma):
+            return sigma * 3.0  # slope = 3, so vega = 3
+
+        vega = finite_difference_vega(price_func, p["sigma"], h=h)
+        assert vega == pytest.approx(3.0)
+
+
+# ============================================================================
+# black_scholes_price at T=0
+# ============================================================================
+
+class TestBlackScholesPriceAtExpiry:
+    """Test black_scholes_price edge case at T=0."""
+
+    def test_price_at_expiry_itm(self, standard_params):
+        """At T=0, ITM call price equals intrinsic value S0 - K."""
+        p = standard_params
+        price = black_scholes_price(110.0, 100.0, 0.0, p["r"], p["sigma"])
+        assert price == pytest.approx(10.0)
+
+    def test_price_at_expiry_otm(self, standard_params):
+        """At T=0, OTM call price is zero."""
+        p = standard_params
+        price = black_scholes_price(90.0, 100.0, 0.0, p["r"], p["sigma"])
+        assert price == 0.0
+
+    def test_price_at_expiry_atm(self, standard_params):
+        """At T=0, ATM call price (S0=K) is zero."""
+        p = standard_params
+        price = black_scholes_price(100.0, 100.0, 0.0, p["r"], p["sigma"])
+        assert price == 0.0
+
+
+# ============================================================================
+# PathwiseGreeks — delta_asian and vega_asian
+# ============================================================================
+
+class TestPathwiseAsianGreeks:
+    """Test pathwise Greeks for Asian options."""
+
+    def test_delta_asian_shape(self, standard_params):
+        """delta_asian should return array of shape (N_paths,)."""
+        from models import GBMPath, set_seed
+        p = standard_params
+        set_seed(42)
+        gbm = GBMPath(p["S0"], p["r"], p["sigma"])
+        paths = gbm.simulate_paths(p["T"], N_paths=500, N_steps=50)
+        delta = PathwiseGreeks.delta_asian(paths, p["S0"], p["K"], p["T"], p["r"])
+        assert delta.shape == (500,)
+
+    def test_delta_asian_non_negative(self, standard_params):
+        """Pathwise Asian Delta should be >= 0 for a call."""
+        from models import GBMPath, set_seed
+        p = standard_params
+        set_seed(42)
+        gbm = GBMPath(p["S0"], p["r"], p["sigma"])
+        paths = gbm.simulate_paths(p["T"], N_paths=1000, N_steps=50)
+        delta = PathwiseGreeks.delta_asian(paths, p["S0"], p["K"], p["T"], p["r"])
+        assert np.all(delta >= 0.0)
+
+    def test_delta_asian_zero_for_otm(self, standard_params):
+        """OTM paths (average < K) should produce zero Asian Delta."""
+        p = standard_params
+        # Paths that are always below strike
+        paths = np.array([
+            [100.0, 80.0, 85.0, 90.0],
+            [100.0, 70.0, 75.0, 80.0],
+        ])
+        delta = PathwiseGreeks.delta_asian(paths, p["S0"], p["K"], p["T"], p["r"])
+        assert np.all(delta == 0.0)
+
+    def test_delta_asian_positive_for_itm(self, standard_params):
+        """ITM paths (average > K) should have positive Asian Delta."""
+        p = standard_params
+        paths = np.array([
+            [100.0, 120.0, 125.0, 130.0],
+            [100.0, 115.0, 118.0, 122.0],
+        ])
+        delta = PathwiseGreeks.delta_asian(paths, p["S0"], p["K"], p["T"], p["r"])
+        assert np.all(delta > 0.0)
+
+    def test_delta_asian_formula(self, standard_params):
+        """delta_asian = indicator(A>K) * A/S0."""
+        p = standard_params
+        paths = np.array([[100.0, 120.0, 120.0, 120.0]])  # avg=120, A/S0=1.2
+        delta = PathwiseGreeks.delta_asian(paths, p["S0"], p["K"], p["T"], p["r"])
+        assert delta[0] == pytest.approx(120.0 / 100.0)
+
+    def test_vega_asian_shape(self, standard_params):
+        """vega_asian should return array of shape (N_paths,)."""
+        from models import GBMPath, set_seed
+        p = standard_params
+        set_seed(42)
+        gbm = GBMPath(p["S0"], p["r"], p["sigma"])
+        paths = gbm.simulate_paths(p["T"], N_paths=500, N_steps=50)
+        vega = PathwiseGreeks.vega_asian(
+            paths, p["S0"], p["K"], p["T"], p["r"], p["sigma"], N_steps=50
+        )
+        assert vega.shape == (500,)
+
+    def test_vega_asian_finite(self, standard_params):
+        """All vega_asian values should be finite."""
+        from models import GBMPath, set_seed
+        p = standard_params
+        set_seed(42)
+        gbm = GBMPath(p["S0"], p["r"], p["sigma"])
+        paths = gbm.simulate_paths(p["T"], N_paths=200, N_steps=30)
+        vega = PathwiseGreeks.vega_asian(
+            paths, p["S0"], p["K"], p["T"], p["r"], p["sigma"], N_steps=30
+        )
+        assert np.all(np.isfinite(vega))
+
+    def test_vega_asian_zero_for_deep_otm(self, standard_params):
+        """Deep OTM paths (average << K) should have zero Asian Vega."""
+        p = standard_params
+        paths = np.array([
+            [100.0, 50.0, 55.0, 60.0],
+            [100.0, 40.0, 45.0, 50.0],
+        ])
+        vega = PathwiseGreeks.vega_asian(
+            paths, p["S0"], p["K"], p["T"], p["r"], p["sigma"], N_steps=3
+        )
+        assert np.all(vega == 0.0)
+
+    def test_vega_asian_expected_positive(self, standard_params):
+        """Mean Asian Vega should be positive in expectation."""
+        from models import GBMPath, set_seed
+        p = standard_params
+        set_seed(42)
+        gbm = GBMPath(p["S0"], p["r"], p["sigma"])
+        N_steps = 50
+        paths = gbm.simulate_paths(p["T"], N_paths=50_000, N_steps=N_steps)
+        vega = PathwiseGreeks.vega_asian(
+            paths, p["S0"], p["K"], p["T"], p["r"], p["sigma"], N_steps=N_steps
+        )
+        discount = np.exp(-p["r"] * p["T"])
+        mc_vega = discount * np.mean(vega)
+        assert mc_vega > 0.0
+
+
+# ============================================================================
+# LikelihoodRatioGreeks — score_delta_heston and vega()
+# ============================================================================
+
+class TestLikelihoodRatioHestonAndVega:
+    """Test Heston score function and LR vega."""
+
+    def test_score_delta_heston_shape(self, standard_params):
+        """Heston score should return array of shape (N_paths,)."""
+        from models import HestonPath, set_seed
+        p = standard_params
+        set_seed(42)
+        model = HestonPath(
+            S0=p["S0"], v0=0.04, r=p["r"],
+            kappa=2.0, theta=0.04, xi=0.30, rho=-0.70,
+        )
+        S, v = model.simulate_paths(p["T"], N_paths=500, N_steps=50)
+        scores = LikelihoodRatioGreeks.score_delta_heston(
+            S[:, -1], p["S0"], v[:, -1], 0.04, p["T"], p["r"]
+        )
+        assert scores.shape == (500,)
+
+    def test_score_delta_heston_finite(self, standard_params):
+        """Heston scores should all be finite."""
+        from models import HestonPath, set_seed
+        p = standard_params
+        set_seed(42)
+        model = HestonPath(
+            S0=p["S0"], v0=0.04, r=p["r"],
+            kappa=2.0, theta=0.04, xi=0.30, rho=-0.70,
+        )
+        S, v = model.simulate_paths(p["T"], N_paths=500, N_steps=50)
+        scores = LikelihoodRatioGreeks.score_delta_heston(
+            S[:, -1], p["S0"], v[:, -1], 0.04, p["T"], p["r"]
+        )
+        assert np.all(np.isfinite(scores))
+
+    def test_lr_vega_static_method(self, large_sample):
+        """LikelihoodRatioGreeks.vega() should return a finite scalar."""
+        params, S_T, N = large_sample
+        option = EuropeanOption(params["K"], params["T"], params["r"])
+        payoffs = option.payoff(S_T)
+        scores = LikelihoodRatioGreeks.score_vega_gbm(
+            S_T, params["S0"], params["sigma"], params["T"], params["r"]
+        )
+        vega = LikelihoodRatioGreeks.vega(payoffs, scores, option._discount)
+        assert np.isfinite(vega)
+        assert vega > 0.0  # Vega should be positive for a call
+
+
+# ============================================================================
+# compute_all_deltas and compute_all_vegas
+# ============================================================================
+
+class TestComputeAllGreeks:
+    """Test the compute_all_deltas and compute_all_vegas aggregate functions."""
+
+    def test_compute_all_deltas_keys(self, standard_params):
+        """compute_all_deltas should return all four method keys."""
+        from models import GBMPath, set_seed
+        p = standard_params
+        set_seed(42)
+        gbm = GBMPath(p["S0"], p["r"], p["sigma"])
+        option = EuropeanOption(p["K"], p["T"], p["r"])
+        N = 10_000
+        S_T = gbm.simulate_terminal(p["T"], N)
+        payoffs = option.payoff(S_T)
+
+        def price_func(S0):
+            set_seed(42)
+            g = GBMPath(S0, p["r"], p["sigma"])
+            return option.price_from_terminal(g.simulate_terminal(p["T"], N))
+
+        results = compute_all_deltas(
+            S_T, payoffs, p["S0"], p["K"], p["T"], p["r"], p["sigma"],
+            option._discount, price_func,
+        )
+        assert set(results.keys()) == {"pathwise", "likelihood_ratio",
+                                       "finite_difference", "black_scholes"}
+
+    def test_compute_all_deltas_values_finite(self, standard_params):
+        """All Delta estimates should be finite."""
+        from models import GBMPath, set_seed
+        p = standard_params
+        set_seed(42)
+        gbm = GBMPath(p["S0"], p["r"], p["sigma"])
+        option = EuropeanOption(p["K"], p["T"], p["r"])
+        N = 10_000
+        S_T = gbm.simulate_terminal(p["T"], N)
+        payoffs = option.payoff(S_T)
+
+        def price_func(S0):
+            set_seed(42)
+            g = GBMPath(S0, p["r"], p["sigma"])
+            return option.price_from_terminal(g.simulate_terminal(p["T"], N))
+
+        results = compute_all_deltas(
+            S_T, payoffs, p["S0"], p["K"], p["T"], p["r"], p["sigma"],
+            option._discount, price_func,
+        )
+        for method, val in results.items():
+            assert np.isfinite(val), f"{method} returned non-finite Delta"
+
+    def test_compute_all_vegas_keys(self, standard_params):
+        """compute_all_vegas should return all four method keys."""
+        from models import GBMPath, set_seed
+        p = standard_params
+        set_seed(42)
+        gbm = GBMPath(p["S0"], p["r"], p["sigma"])
+        option = EuropeanOption(p["K"], p["T"], p["r"])
+        N = 10_000
+        S_T = gbm.simulate_terminal(p["T"], N)
+        payoffs = option.payoff(S_T)
+
+        def price_func(sigma):
+            set_seed(42)
+            g = GBMPath(p["S0"], p["r"], sigma)
+            return option.price_from_terminal(g.simulate_terminal(p["T"], N))
+
+        results = compute_all_vegas(
+            S_T, payoffs, p["S0"], p["K"], p["T"], p["r"], p["sigma"],
+            option._discount, price_func,
+        )
+        assert set(results.keys()) == {"pathwise", "likelihood_ratio",
+                                       "finite_difference", "black_scholes"}
+
+    def test_compute_all_vegas_values_finite(self, standard_params):
+        """All Vega estimates should be finite."""
+        from models import GBMPath, set_seed
+        p = standard_params
+        set_seed(42)
+        gbm = GBMPath(p["S0"], p["r"], p["sigma"])
+        option = EuropeanOption(p["K"], p["T"], p["r"])
+        N = 10_000
+        S_T = gbm.simulate_terminal(p["T"], N)
+        payoffs = option.payoff(S_T)
+
+        def price_func(sigma):
+            set_seed(42)
+            g = GBMPath(p["S0"], p["r"], sigma)
+            return option.price_from_terminal(g.simulate_terminal(p["T"], N))
+
+        results = compute_all_vegas(
+            S_T, payoffs, p["S0"], p["K"], p["T"], p["r"], p["sigma"],
+            option._discount, price_func,
+        )
+        for method, val in results.items():
+            assert np.isfinite(val), f"{method} returned non-finite Vega"
