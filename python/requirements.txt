@@ -1,0 +1,93 @@
+# ============================================================================
+# Monte Carlo Option Pricer - Python Dependencies
+# ============================================================================
+#
+# Install all dependencies:
+#   pip install -r requirements.txt
+#
+# Or install individually:
+#   pip install numpy scipy matplotlib
+#
+# Minimum Python version: 3.8+
+#
+# Author: Claudia Maria Lopez Bombin
+# License: MIT
+# Repository: github.com/claudialbombin/monte-carlo-option-pricer
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Core Numerical Computing
+# ---------------------------------------------------------------------------
+
+# NumPy: Fundamental package for scientific computing in Python.
+# Used for: Vectorized array operations, random number generation
+#           (PCG-64 bit generator), statistical calculations,
+#           and efficient numerical computation throughout the
+#           Monte Carlo simulation engine.
+# Critical for: Generating N_paths x N_steps arrays of Brownian
+#               increments in one shot — this vectorization is what
+#               makes the engine fast enough to run 1M+ paths.
+numpy>=1.24.0,<2.0.0
+
+# SciPy: Scientific computing library.
+# Used for: Statistical distributions (norm.cdf, norm.pdf) for
+#           Black-Scholes closed-form reference prices and Greeks,
+#           which serve as the ground truth for validating Monte
+#           Carlo estimates.
+# Critical for: Black-Scholes formula validation — we compare MC
+#               prices against scipy.stats.norm.cdf to verify
+#               convergence and correctness.
+scipy>=1.10.0,<2.0.0
+
+# ---------------------------------------------------------------------------
+# Data Visualization
+# ---------------------------------------------------------------------------
+
+# Matplotlib: Comprehensive plotting library for Python.
+# Used for: Generating all project visualizations including
+#           convergence plots (error vs N on log-log scale),
+#           discretization bias plots (bias vs Δt),
+#           and Greeks comparison charts (pathwise vs likelihood
+#           ratio vs finite differences vs closed-form).
+# Version 3.7.0+ required for modern style sheets and
+# consistent rendering across platforms.
+matplotlib>=3.7.0,<4.0.0
+
+# ---------------------------------------------------------------------------
+# Optional / Development Dependencies
+# ---------------------------------------------------------------------------
+
+# pytest: Testing framework (optional, for running test suite).
+# Used for: Unit tests for models, options, and Greeks modules.
+# Uncomment to run the test suite:
+# pytest>=7.0.0
+
+# pytest-cov: Coverage plugin for pytest (optional).
+# Used for: Measuring test coverage to ensure all code paths
+#           are exercised.
+# Uncomment to generate coverage reports:
+# pytest-cov>=4.0.0
+
+# ---------------------------------------------------------------------------
+# Notes
+# ---------------------------------------------------------------------------
+#
+# DELIBERATELY EXCLUDED LIBRARIES:
+# - No QuantLib: This project is about building from scratch to
+#   demonstrate understanding, not wrapping a black-box library.
+# - No PyTorch / TensorFlow: Not needed for classical MC; GPU
+#   acceleration would obscure the algorithmic implementation.
+# - No Numba / Cython: Pure NumPy vectorization is sufficient for
+#   the scale of simulations in this project (up to ~10M paths).
+#
+# All dependencies are pure Python or have pre-compiled wheels
+# available for Windows, macOS, and Linux. No C compiler or
+# system libraries required for the Python version.
+#
+# For the C version of this project, see the /c directory which
+# depends only on the C standard library (libc + libm).
+#
+# Tested with Python 3.8, 3.9, 3.10, 3.11, and 3.12.
+#
+# Installation time: ~20 seconds on a typical broadband connection.
+# Disk space required: ~250 MB for all packages and dependencies.
